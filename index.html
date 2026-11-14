@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="id">
 <head>
@@ -26,11 +27,15 @@ select,button{background:#20324c;color:#fff;border:1px solid #3a506d;border-radi
 button{cursor:pointer}
 canvas{width:100%;height:190px;display:block}
 .indicators{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
-.metric{background:#1b2b43;border-radius:9px;padding:11px}
+.metric{background:#1b2b43;border-radius:9px;padding:11px;min-width:0}
 .metric b{display:block;font-size:16px;margin-top:6px;overflow-wrap:anywhere}
 .signal{font-size:17px;font-weight:bold;margin:8px 0}
 footer{padding:20px 5px;color:#8293aa;font-size:11px;line-height:1.7}
-@media(max-width:360px){.price{font-size:17px}.grid{gap:8px}.card{padding:10px}}
+@media(max-width:360px){
+.price{font-size:17px}
+.grid{gap:8px}
+.card{padding:10px}
+}
 </style>
 </head>
 <body>
@@ -38,8 +43,10 @@ footer{padding:20px 5px;color:#8293aa;font-size:11px;line-height:1.7}
 <h1>JELYTA AI TRADING</h1>
 <div class="sub">INDODAX MARKET ANALYSIS · ANDROID EDITION</div>
 </header>
+
 <main>
-<div class="status" id="status">Menghubungkan ke data pasar publik INDODAX...</div>
+<div class="status" id="status">Menghubungkan ke INDODAX...</div>
+
 <div class="grid" id="coins">
 <div class="card">Memuat BTC/IDR...</div>
 <div class="card">Memuat ETH/IDR...</div>
@@ -48,16 +55,19 @@ footer{padding:20px 5px;color:#8293aa;font-size:11px;line-height:1.7}
 </div>
 
 <h2 class="section">Analisis teknikal</h2>
+
 <div class="panel">
-<label for="pair" class="small">Pilih aset: </label>
-<select id="pair" onchange="loadAnalysis()">
+<label for="pair" class="small">Pilih aset:</label>
+<select id="pair">
 <option value="btcidr">BTC/IDR</option>
 <option value="ethidr">ETH/IDR</option>
 <option value="xrpidr">XRP/IDR</option>
 <option value="solidr">SOL/IDR</option>
 </select>
+
 <div class="small" id="analysisStatus">Menunggu data candle...</div>
 <canvas id="chart" width="700" height="190"></canvas>
+
 <div class="indicators">
 <div class="metric"><span class="small">RSI 14</span><b id="rsi">--</b></div>
 <div class="metric"><span class="small">EMA 9</span><b id="ema9">--</b></div>
@@ -66,48 +76,67 @@ footer{padding:20px 5px;color:#8293aa;font-size:11px;line-height:1.7}
 <div class="metric"><span class="small">Support perkiraan</span><b id="support">--</b></div>
 <div class="metric"><span class="small">Resistance perkiraan</span><b id="resistance">--</b></div>
 </div>
+
 <div class="section">Hasil pembacaan indikator</div>
 <div class="signal" id="signal">Menunggu analisis</div>
 <div class="small" id="explanation">Analisis akan muncul setelah data candle diterima.</div>
 </div>
 
 <div class="small" id="updated">Pembaruan terakhir: belum tersedia</div>
+
 <footer>
-JELYTA AI TRADING · Versi pengembangan awal.<br>
+JELYTA AI TRADING · Versi pengembangan.<br>
 Data berasal dari endpoint publik INDODAX. Indikator merupakan alat bantu analisis, bukan jaminan hasil atau rekomendasi investasi. Tidak ada transaksi yang dijalankan oleh halaman ini.
 </footer>
 </main>
+
 <script>
+"use strict";
+
 const pairs=["btcidr","ethidr","xrpidr","solidr"];
-const names={btcidr:"BTC/IDR",ethidr:"ETH/IDR",xrpidr:"XRP/IDR",solidr:"SOL/IDR"};
-let candleCache={};
+const names={
+ btcidr:"BTC/IDR",
+ ethidr:"ETH/IDR",
+ xrpidr:"XRP/IDR",
+ solidr:"SOL/IDR"
+};
+
+let busy=false;
+let lastAnalysisPair="";
 
 function rupiah(n){
  if(!Number.isFinite(Number(n)))return "--";
  return "Rp"+Number(n).toLocaleString("id-ID",{maximumFractionDigits:0});
 }
+
 function pct(n){
  return (Number(n)>=0?"+":"")+Number(n).toFixed(2)+"%";
 }
+
 async function getJSON(url){
- const r=await fetch(url,{cache:"no-store"});
- if(!r.ok)throw new Error("HTTP "+r.status);
- return r.json();
+ const response=await fetch(url,{cache:"no-store"});
+ if(!response.ok)throw new Error("HTTP "+response.status);
+ return await response.json();
 }
 
+/* TICKER INDODAX V2 */
 async function loadTickers(){
- const cards=[];
- for(const p of pairs){
+ const cards=await Promise.all(pairs.map(async p=>{
   try{
    const d=await getJSON(
     "https://api.indodax.com/api/v2/ticker/24hr?symbol="+p.toUpperCase()
    );
+
    const last=Number(d.lastPrice);
    const high=Number(d.highPrice);
    const low=Number(d.lowPrice);
-   const change=Number(d.priceChangePercent||0);
+   const change=Number(d.priceChangePercent);
 
-   cards.push(`<div class="card">
+   if(!Number.isFinite(last)||last<=0){
+    throw new Error("Harga tidak valid");
+   }
+
+   return `<div class="card">
     <div class="coin">${names[p]}</div>
     <div class="price">${rupiah(last)}</div>
     <div class="change ${change>=0?"green":"red"}">
@@ -117,13 +146,240 @@ async function loadTickers(){
      Tertinggi: ${rupiah(high)}<br>
      Terendah: ${rupiah(low)}
     </div>
-   </div>`);
+   </div>`;
   }catch(e){
-   cards.push(`<div class="card">
+   return `<div class="card">
     <div class="coin">${names[p]}</div>
-    <div class="small">Data belum dapat dimuat.<br>${e.message}</div>
-   </div>`);
+    <div class="small">Data belum tersedia.<br>${e.message}</div>
+   </div>`;
   }
- }
+ }));
+
  document.getElementById("coins").innerHTML=cards.join("");
 }
+
+/* EMA */
+function ema(values,period){
+ if(values.length<period)return null;
+ const k=2/(period+1);
+ let value=values.slice(0,period).reduce((a,b)=>a+b,0)/period;
+ for(let i=period;i<values.length;i++){
+  value=values[i]*k+value*(1-k);
+ }
+ return value;
+}
+
+/* RSI WILDER */
+function rsiWilder(values,period=14){
+ if(values.length<=period)return null;
+
+ let gain=0,loss=0;
+ for(let i=1;i<=period;i++){
+  const d=values[i]-values[i-1];
+  gain+=Math.max(d,0);
+  loss+=Math.max(-d,0);
+ }
+
+ let avgGain=gain/period;
+ let avgLoss=loss/period;
+
+ for(let i=period+1;i<values.length;i++){
+  const d=values[i]-values[i-1];
+  avgGain=(avgGain*(period-1)+Math.max(d,0))/period;
+  avgLoss=(avgLoss*(period-1)+Math.max(-d,0))/period;
+ }
+
+ if(avgLoss===0)return 100;
+ return 100-(100/(1+avgGain/avgLoss));
+}
+
+/* MACD */
+function macdValue(values){
+ const fast=[],slow=[],line=[];
+
+ for(let i=0;i<values.length;i++){
+  const part=values.slice(0,i+1);
+  const a=ema(part,12);
+  const b=ema(part,26);
+  if(a!==null&&b!==null)line.push(a-b);
+ }
+
+ if(!line.length)return null;
+
+ const signal=ema(line,9);
+ return {
+  line:line[line.length-1],
+  signal:signal,
+  hist:signal===null?null:line[line.length-1]-signal
+ };
+}
+
+/* GRAFIK */
+function drawChart(candles){
+ const canvas=document.getElementById("chart");
+ const ctx=canvas.getContext("2d");
+ const w=canvas.width,h=canvas.height;
+
+ ctx.clearRect(0,0,w,h);
+
+ if(!candles.length)return;
+
+ const arr=candles.slice(-40);
+ const values=arr.map(x=>Number(x.Close));
+ const low=Math.min(...values);
+ const high=Math.max(...values);
+ const range=(high-low)||1;
+ const pad=15;
+
+ ctx.strokeStyle="#2b405c";
+ ctx.lineWidth=1;
+
+ for(let i=0;i<4;i++){
+  const y=pad+i*(h-2*pad)/3;
+  ctx.beginPath();
+  ctx.moveTo(0,y);
+  ctx.lineTo(w,y);
+  ctx.stroke();
+ }
+
+ const step=w/Math.max(arr.length-1,1);
+
+ ctx.beginPath();
+ ctx.lineWidth=2;
+ ctx.strokeStyle="#55d6ae";
+
+ values.forEach((v,i)=>{
+  const x=i*step;
+  const y=h-pad-(v-low)/range*(h-2*pad);
+  if(i===0)ctx.moveTo(x,y);
+  else ctx.lineTo(x,y);
+ });
+
+ ctx.stroke();
+}
+
+/* ANALISIS CANDLE */
+async function loadAnalysis(){
+ const pair=document.getElementById("pair").value;
+
+ document.getElementById("analysisStatus").textContent=
+  "Mengambil data candle 15 menit...";
+
+ try{
+  const to=Math.floor(Date.now()/1000);
+  const from=to-86400*2;
+
+  const url=
+   `https://indodax.com/tradingview/history_v2?from=${from}&symbol=${pair.toUpperCase()}&tf=15&to=${to}`;
+
+  const raw=await getJSON(url);
+
+  if(!Array.isArray(raw)||raw.length<30){
+   throw new Error("Data candle belum cukup");
+  }
+
+  const candles=raw
+   .filter(x=>Number.isFinite(Number(x.Close)))
+   .sort((a,b)=>a.Time-b.Time);
+
+  if(candles.length<30){
+   throw new Error("Candle valid kurang dari 30");
+  }
+
+  const closes=candles.map(x=>Number(x.Close));
+
+  const r=rsiWilder(closes,14);
+  const e9=ema(closes,9);
+  const e21=ema(closes,21);
+  const macd=macdValue(closes);
+
+  const recent=candles.slice(-20);
+  const support=Math.min(...recent.map(x=>Number(x.Low)));
+  const resistance=Math.max(...recent.map(x=>Number(x.High)));
+
+  document.getElementById("rsi").textContent=
+   r===null?"--":r.toFixed(2);
+
+  document.getElementById("ema9").textContent=rupiah(e9);
+  document.getElementById("ema21").textContent=rupiah(e21);
+  document.getElementById("macd").textContent=
+   macd?macd.line.toFixed(2):"--";
+
+  document.getElementById("support").textContent=rupiah(support);
+  document.getElementById("resistance").textContent=rupiah(resistance);
+
+  drawChart(candles);
+
+  let label="NETRAL";
+  let explanation="Indikator belum menunjukkan keselarasan tren yang cukup.";
+
+  if(r!==null&&e9!==null&&e21!==null&&macd&&macd.hist!==null){
+   if(e9>e21&&macd.hist>0&&r>=50&&r<70){
+    label="MOMENTUM BULLISH";
+    explanation="EMA 9 di atas EMA 21, MACD positif, dan RSI mendukung momentum naik. Waspadai perubahan harga.";
+   }else if(e9<e21&&macd.hist<0&&r<50){
+    label="MOMENTUM BEARISH";
+    explanation="EMA 9 di bawah EMA 21, MACD negatif, dan RSI menunjukkan momentum lemah.";
+   }else if(r>=70){
+    label="RSI TINGGI";
+    explanation="RSI berada di area tinggi. Momentum kuat dapat disertai risiko koreksi.";
+   }else if(r<=30){
+    label="RSI RENDAH";
+    explanation="RSI berada di area rendah. Ini bukan bukti harga pasti akan naik.";
+   }
+  }
+
+  document.getElementById("signal").textContent=label;
+  document.getElementById("explanation").textContent=explanation;
+
+  document.getElementById("analysisStatus").textContent=
+   `${names[pair]} · ${candles.length} candle 15 menit diterima`;
+
+  lastAnalysisPair=pair;
+
+ }catch(error){
+  document.getElementById("analysisStatus").textContent=
+   "Gagal mengambil analisis: "+error.message;
+
+  document.getElementById("signal").textContent="DATA BELUM TERSEDIA";
+  document.getElementById("explanation").textContent=
+   "Periksa koneksi atau kemungkinan pembatasan CORS dari server.";
+ }
+}
+
+/* PEMBARUAN */
+async function refresh(){
+ if(busy)return;
+ busy=true;
+
+ document.getElementById("status").textContent=
+  "Memperbarui data pasar INDODAX...";
+
+ try{
+  await loadTickers();
+  await loadAnalysis();
+
+  document.getElementById("status").textContent=
+   "Terhubung ke proses pemantauan data publik INDODAX.";
+
+  document.getElementById("updated").textContent=
+   "Pembaruan terakhir: "+new Date().toLocaleString("id-ID");
+
+ }catch(error){
+  document.getElementById("status").textContent=
+   "Terjadi kesalahan: "+error.message;
+ }finally{
+  busy=false;
+ }
+}
+
+/* PILIH ASET */
+document.getElementById("pair").addEventListener("change",()=>{
+ loadAnalysis();
+});
+
+refresh();
+setInterval(refresh,30000);
+</script>
+</body>
+</html>
